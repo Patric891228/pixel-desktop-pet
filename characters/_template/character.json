@@ -71,7 +71,14 @@
   "passthrough_on": [],
   "passthrough_off": [],
   "pat@high": [],
-  "pat@low": []
+  "pat@low": [],
+  "birthday": [],
+  "anniversary": [],
+  "typing": [],
+  "input_recap": [],
+  "ask_name": [],
+  "profile_saved": [],
+  "profile_named": []
  },
  "chime_extra": {
   "12": "吃飯時間到了。"

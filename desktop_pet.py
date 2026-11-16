@@ -22,12 +22,12 @@ from PySide6.QtGui import (QRegion, QPixmap, QPainter, QTransform, QColor, QFont
                            QIcon, QAction, QActionGroup)
 from PySide6.QtWidgets import (QApplication, QWidget, QMenu, QSystemTrayIcon, QLabel, QProgressBar,
                                QVBoxLayout, QHBoxLayout, QPushButton, QGridLayout, QListWidget, QTimeEdit,
-                               QLineEdit, QMessageBox, QProgressDialog)
+                               QLineEdit, QMessageBox, QProgressDialog, QCheckBox, QSpinBox)
 from PySide6.QtCore import QPropertyAnimation, QTime
 
 from brain import Brain, parse_reminder
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 FROZEN = getattr(sys, "frozen", False)          # 打包成執行檔（PyInstaller）時為 True
 HERE = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 CHAR_ROOT = os.path.join(HERE, "characters")
@@ -211,9 +211,77 @@ def minute_of_day():
     return t.hour * 60 + t.minute
 
 
-def is_nap(m):   return 12 * 60 + 30 <= m < 13 * 60 + 30
-def is_night(m): return m >= 23 * 60 or m < 7 * 60
-def is_pre_sleep(m): return 11 * 60 + 30 <= m < 12 * 60 + 30 or 22 * 60 <= m < 23 * 60
+# 作息（分鐘）：照「主人資料」裡的起床、睡覺、午睡時間；沒填就用預設
+PROFILE_DEFAULT = {"name": "", "birthday": "", "wake": "07:00", "bed": "23:00",
+                   "nap": True, "nap_start": "12:30", "nap_end": "13:30"}
+SCHED = {"wake": 7 * 60, "bed": 23 * 60, "nap": (12 * 60 + 30, 13 * 60 + 30)}
+OWNER = {"name": ""}                                   # 主人的名字（台詞裡的 {name}）
+
+
+def hm_to_min(t, default):
+    try:
+        h, m = str(t).split(":")
+        h, m = int(h), int(m)
+        return h * 60 + m if 0 <= h < 24 and 0 <= m < 60 else default
+    except (ValueError, AttributeError):
+        return default
+
+
+def apply_profile(p):
+    """把主人資料套進作息和名字。"""
+    wake, bed = hm_to_min(p.get("wake"), 7 * 60), hm_to_min(p.get("bed"), 23 * 60)
+    if wake == bed:
+        wake, bed = 7 * 60, 23 * 60
+    SCHED["wake"], SCHED["bed"] = wake, bed
+    a, b = hm_to_min(p.get("nap_start"), 12 * 60 + 30), hm_to_min(p.get("nap_end"), 13 * 60 + 30)
+    SCHED["nap"] = (a, b) if p.get("nap", True) and a != b else None
+    OWNER["name"] = (p.get("name") or "").strip()
+
+
+def in_span(m, a, b):
+    """m 在 [a, b) 之間；跨過半夜也可以（例如 23:00–07:00）。"""
+    a, b = a % 1440, b % 1440
+    return a <= m < b if a <= b else (m >= a or m < b)
+
+
+def is_nap(m):
+    return SCHED["nap"] is not None and in_span(m, *SCHED["nap"]) and not is_night(m)
+def is_night(m): return in_span(m, SCHED["bed"], SCHED["wake"])
+def is_pre_bed(m): return in_span(m, SCHED["bed"] - 60, SCHED["bed"])
+def is_pre_sleep(m):
+    nap = SCHED["nap"]
+    return is_pre_bed(m) or (nap is not None and in_span(m, nap[0] - 60, nap[0]))
+
+
+def fill(text, **kw):
+    """台詞裡的 {name}、{m} 這類欄位：只換有給的，其他原樣保留（不會因為大括號出錯）。
+    沒填名字時，「{name}，」整段拿掉，其他的 {name} 換成「你」。"""
+    if not text:
+        return text
+    name = OWNER["name"]
+    text = text.replace("{name}，", name + "，" if name else "").replace("{name}", name or "你")
+    for k, v in kw.items():
+        text = text.replace("{" + k + "}", str(v))
+    return text
+
+
+def birthday_today(p):
+    b = p.get("birthday") or ""
+    try:
+        mm, dd = int(b[:2]), int(b[3:5])
+    except ValueError:
+        return False
+    t = date.today()
+    if (mm, dd) == (2, 29) and not (t.year % 4 == 0 and (t.year % 100 or t.year % 400 == 0)):
+        return (t.month, t.day) == (2, 28)                # 2/29 生日：平年在 2/28 過
+    return (t.month, t.day) == (mm, dd)
+
+
+ANNIV_DAYS = {7, 30, 50, 100, 200, 300, 365, 500, 730, 1000}
+
+
+def is_anniversary(d):
+    return d in ANNIV_DAYS or (d > 0 and (d % 100 == 0 or d % 365 == 0))
 
 
 def fmt_hours(sec):
@@ -237,10 +305,17 @@ class Stats:
         self.last_seen = time.time()
         self.gift_log = {}           # 每種禮物送過幾次
         self.events = {}             # 今日行事曆：{"2026-11-11": [{"t": "15:30", "text": "開會"}, ...]}
+        self.profile = dict(PROFILE_DEFAULT)   # 主人資料：名字、生日、作息
+        self.input_day = date.today().isoformat()
+        self.keys_today = 0          # 今天按了幾次鍵盤（只算次數，不記按了什麼）
+        self.clicks_today = 0        # 今天點了幾次滑鼠
+        self.special_done = {}       # 生日、紀念日、睡前回顧：{"birthday": "2026-11-16", ...} 一天一次
+        self.asked_name = False
         self.settings = {"scale": 4, "on_top": True, "schedule": True, "x": None, "chat": True, "bubble": "paper",
                          "sit_min": 50, "chime": True, "climb": True, "stay": False,
                          "passthrough": False,
-                         "llm_on": False, "llm_fresh": 0.25, "llm_memory": True}
+                         "llm_on": False, "llm_fresh": 0.25, "llm_memory": True,
+                         "count_input": True}
 
     def load(self):
         try:
@@ -248,8 +323,8 @@ class Stats:
         except (OSError, ValueError):
             return
         for k, v in d.items():
-            if k == "settings":
-                self.settings.update(v)
+            if k in ("settings", "profile") and isinstance(v, dict):
+                getattr(self, k).update(v)
             elif hasattr(self, k):
                 setattr(self, k, v)
         today = date.today().isoformat()
@@ -296,6 +371,8 @@ class Stats:
         today = date.today().isoformat()
         if self.pats_date != today:
             self.pats_date, self.pats_today = today, 0
+        if self.input_day != today:
+            self.input_day, self.keys_today, self.clicks_today = today, 0, 0
 
     def gift_eta(self):
         return GIFT_REGEN_H * HOUR - self.gift_timer
@@ -499,8 +576,9 @@ class StatusPanel(QWidget):
         self.eng = QProgressBar(maximum=100); self.eng.setStyleSheet(BAR_CSS % "#96cdff")
         self.likes = QLabel(); self.likes.setTextFormat(Qt.RichText)
         self.gifts = QLabel(); self.neglect = QLabel(); self.pats = QLabel(); self.days = QLabel()
+        self.inputs = QLabel()
         rows = [("好感度", self.aff), ("精力", self.eng), ("禮物", self.gifts), ("喜好", self.likes),
-                ("冷落", self.neglect), ("今天摸頭", self.pats), ("相處", self.days)]
+                ("冷落", self.neglect), ("今天摸頭", self.pats), ("今天輸入", self.inputs), ("相處", self.days)]
         for r, (k, w) in enumerate(rows):
             lab = QLabel(k); lab.setStyleSheet("color:#9a96c0")
             grid.addWidget(lab, r, 0, Qt.AlignTop if w is self.likes else Qt.AlignVCenter); grid.addWidget(w, r, 1)
@@ -539,8 +617,19 @@ class StatusPanel(QWidget):
             self.adjustSize()
         self.neglect.setText(f"再 {fmt_hours(s.neglect_eta() / TIME_SCALE)} 沒理她，好感 -1")
         self.pats.setText(f"{s.pats_today} 次（前 {PAT_DAILY} 次各 +{PAT_GAIN} 好感）")
-        d = (date.today() - date.fromisoformat(s.first_day)).days + 1
-        self.days.setText(f"第 {d} 天")
+        if not s.settings.get("count_input", True):
+            self.inputs.setText("沒有統計（設定裡可以打開）")
+        elif pet.counter.error:
+            self.inputs.setText(pet.counter.error)
+        else:
+            self.inputs.setText(f"鍵盤 {s.keys_today:,} 下　滑鼠 {s.clicks_today:,} 下")
+        d = pet.days_together()
+        text = f"第 {d} 天"
+        if is_anniversary(d):
+            text += "（紀念日）"
+        if birthday_today(s.profile):
+            text += "　今天是你的生日"
+        self.days.setText(text)
 
 
 # ===== 今日行事曆（試做） =====
@@ -612,6 +701,171 @@ DIALOG_CSS = ("QWidget{background:#181a26;color:#fff0e6;font-size:13px} "
               "QListWidget::item:selected{background:#f0343c}"
               "QPushButton{background:#2e2a48;border:1px solid #646092;padding:5px 10px;border-radius:4px}"
               "QPushButton:hover{background:#464068}")
+
+
+# ===== 鍵盤滑鼠計數（只算次數，不記按了什麼） =====
+class InputCounter:
+    """在背景監聽全域的鍵盤、滑鼠點擊，只累加次數。
+    Windows、Linux（X11）用 pynput；macOS 的鍵盤用只看「有沒有按下」的事件監聽，
+    不去轉換成字元（pynput 轉字元那一步在新版 macOS 的背景執行緒會當掉）。
+    Wayland 不准程式監聽其他視窗的輸入，所以不支援。"""
+
+    def __init__(self):
+        self.keys = self.clicks = 0
+        self.listeners = []
+        self.error = None
+
+    @property
+    def running(self):
+        return bool(self.listeners)
+
+    def start(self):
+        if self.listeners:
+            return True
+        self.error = None
+        if sys.platform.startswith("linux") and (os.environ.get("XDG_SESSION_TYPE") == "wayland"
+                                                 or os.environ.get("WAYLAND_DISPLAY")):
+            self.error = "Wayland 不支援（登入時改選 Xorg 就可以）"
+            return False
+        try:
+            from pynput import mouse
+            ms = mouse.Listener(on_click=self._click)
+            if sys.platform == "darwin":
+                kb = self._mac_key_tap(mouse)
+            else:
+                from pynput import keyboard
+                kb = keyboard.Listener(on_press=self._key)
+            for li in (ms, kb):
+                li.daemon = True
+                li.start()
+                self.listeners.append(li)
+        except Exception as e:                    # 沒裝 pynput、沒有 X、沒有權限……
+            self.stop()
+            self.error = "這台電腦抓不到鍵盤滑鼠"
+            print("input counter:", repr(e), file=sys.stderr)
+            return False
+        return True
+
+    def _mac_key_tap(self, mouse):
+        import Quartz
+        owner = self
+
+        class KeyTap(mouse.Listener):                       # pynput 的 macOS 事件監聽（CGEventTap），改聽按鍵
+            _EVENTS = Quartz.CGEventMaskBit(Quartz.kCGEventKeyDown)
+
+            def _handle_message(self, _proxy, event_type, event, _refcon, injected):
+                try:
+                    if event_type == Quartz.kCGEventKeyDown and not Quartz.CGEventGetIntegerValueField(
+                            event, Quartz.kCGKeyboardEventAutorepeat):
+                        owner.keys += 1
+                except Exception:
+                    pass
+        return KeyTap()
+
+    def stop(self):
+        for li in self.listeners:
+            try:
+                li.stop()
+            except Exception:
+                pass
+        self.listeners = []
+
+    def _key(self, _key):
+        self.keys += 1
+
+    def _click(self, _x, _y, _button, pressed):
+        if pressed:
+            self.clicks += 1
+
+    def take(self):
+        """取出累積的次數並歸零。"""
+        k, c = self.keys, self.clicks
+        self.keys -= k
+        self.clicks -= c
+        return k, c
+
+
+# ===== 主人資料 =====
+class ProfileDialog(QWidget):
+    def __init__(self, pet):
+        super().__init__(None, Qt.Window | Qt.WindowStaysOnTopHint)
+        self.pet = pet
+        self.setWindowTitle("主人資料")
+        self.setStyleSheet(DIALOG_CSS + "QTimeEdit,QSpinBox{background:#26242c;border:1px solid #646092;padding:2px}"
+                           "QLabel#hint{color:#9a96c0}")
+        L = QVBoxLayout(self)
+        hint = QLabel("她會記住這些，用來叫你的名字、照你的作息睡覺，生日那天也會記得。\n資料只存在這台電腦。")
+        hint.setObjectName("hint"); hint.setWordWrap(True)
+        L.addWidget(hint)
+        g = QGridLayout()
+        self.name = QLineEdit(); self.name.setMaxLength(12); self.name.setPlaceholderText("她要怎麼叫你（可以不填）")
+        self.bday_on = QCheckBox("生日")
+        self.month = QSpinBox(minimum=1, maximum=12, suffix=" 月")
+        self.day = QSpinBox(minimum=1, maximum=31, suffix=" 日")
+        bd = QHBoxLayout(); bd.addWidget(self.month); bd.addWidget(self.day); bd.addStretch()
+        self.wake = QTimeEdit(displayFormat="HH:mm")
+        self.bed = QTimeEdit(displayFormat="HH:mm")
+        self.nap_on = QCheckBox("午睡")
+        self.nap_a = QTimeEdit(displayFormat="HH:mm")
+        self.nap_b = QTimeEdit(displayFormat="HH:mm")
+        nap = QHBoxLayout(); nap.addWidget(self.nap_a); nap.addWidget(QLabel("到")); nap.addWidget(self.nap_b); nap.addStretch()
+        rows = [(QLabel("名字"), self.name), (self.bday_on, bd), (QLabel("起床"), self.wake),
+                (QLabel("睡覺"), self.bed), (self.nap_on, nap)]
+        for r, (k, w) in enumerate(rows):
+            g.addWidget(k, r, 0)
+            (g.addLayout if isinstance(w, QHBoxLayout) else g.addWidget)(w, r, 1)
+        L.addLayout(g)
+        self.bday_on.toggled.connect(lambda on: (self.month.setEnabled(on), self.day.setEnabled(on)))
+        self.nap_on.toggled.connect(lambda on: (self.nap_a.setEnabled(on), self.nap_b.setEnabled(on)))
+        self.msg = QLabel(); self.msg.setStyleSheet("color:#f0343c")
+        L.addWidget(self.msg)
+        btns = QHBoxLayout(); btns.addStretch()
+        b = QPushButton("取消"); b.clicked.connect(self.close); btns.addWidget(b)
+        b = QPushButton("儲存"); b.clicked.connect(self.save); btns.addWidget(b)
+        L.addLayout(btns)
+        self.setFixedWidth(320)
+
+    @staticmethod
+    def _t(s, default):
+        m = hm_to_min(s, default)
+        return QTime(m // 60, m % 60)
+
+    def showEvent(self, e):
+        p = self.pet.stats.profile
+        self.name.setText(p.get("name", ""))
+        b = p.get("birthday") or ""
+        self.bday_on.setChecked(bool(b))
+        if b:
+            self.month.setValue(int(b[:2])); self.day.setValue(int(b[3:5]))
+        self.month.setEnabled(bool(b)); self.day.setEnabled(bool(b))
+        self.wake.setTime(self._t(p.get("wake"), 7 * 60))
+        self.bed.setTime(self._t(p.get("bed"), 23 * 60))
+        self.nap_on.setChecked(bool(p.get("nap", True)))
+        self.nap_a.setTime(self._t(p.get("nap_start"), 12 * 60 + 30))
+        self.nap_b.setTime(self._t(p.get("nap_end"), 13 * 60 + 30))
+        self.nap_a.setEnabled(self.nap_on.isChecked()); self.nap_b.setEnabled(self.nap_on.isChecked())
+        self.msg.setText("")
+        super().showEvent(e)
+
+    def save(self):
+        fmt = lambda t: t.toString("HH:mm")
+        bday = ""
+        if self.bday_on.isChecked():
+            try:
+                date(2000, self.month.value(), self.day.value())   # 2000 是閏年：2/29 也算有效
+            except ValueError:
+                self.msg.setText("這個日期不存在。"); return
+            bday = f"{self.month.value():02d}-{self.day.value():02d}"
+        if self.wake.time() == self.bed.time():
+            self.msg.setText("起床和睡覺時間不能一樣。"); return
+        if self.nap_on.isChecked() and self.nap_a.time() >= self.nap_b.time():
+            self.msg.setText("午睡的結束時間要比開始晚。"); return
+        old = dict(self.pet.stats.profile)
+        p = {"name": self.name.text().strip(), "birthday": bday, "wake": fmt(self.wake.time()),
+             "bed": fmt(self.bed.time()), "nap": self.nap_on.isChecked(),
+             "nap_start": fmt(self.nap_a.time()), "nap_end": fmt(self.nap_b.time())}
+        self.close()
+        self.pet.set_profile(p, renamed=p["name"] != old.get("name", ""))
 
 
 # ===== 聊天框（小模型；右鍵打開，點外面就關） =====
@@ -723,7 +977,15 @@ class Pet(QWidget):
         self.setAttribute(Qt.WA_MacAlwaysShowToolWindow)   # macOS：切到別的程式時不要消失
         self.setMouseTracking(True)
         self.stats = Stats(); self.stats.load()
+        apply_profile(self.stats.profile)
         MOOD["affection"] = self.stats.affection
+        self.counter = InputCounter()                  # 鍵盤滑鼠次數（設定裡可以關）
+        if self.stats.settings.get("count_input", True):
+            self.counter.start()
+        self.brain_keys = [0, 0]                       # 還沒記進小模型「今天的事」的次數
+        self.key_hist = []                             # 最近幾分鐘的按鍵：[(時間, 次數), ...]
+        self.typing_since, self.next_typing = None, time.time() + 10 * 60
+        self.profile_dialog = None
         self.sprites = Sprites()
         self.bubble = Bubble(self.bubble_changed)
         self.sprite_rect = QRect()
@@ -732,7 +994,7 @@ class Pet(QWidget):
         global BRAIN
         persona = CHAR.get("persona") or {}            # 範本裡還沒填的 persona（「（」開頭）不算
         use = bool(persona.get("description")) and not persona["description"].startswith("（")
-        self.brain = BRAIN = Brain(CONF_DIR, CHAR, self.stats.settings, CHAR_ID) if use else None
+        self.brain = BRAIN = Brain(CONF_DIR, CHAR, self.stats.settings, CHAR_ID, self.stats.profile) if use else None
         self.started_at, self.last_refill = time.time(), 0.0
         self.chat_log = []                             # 聊天框的內容（只在記憶體，關掉程式就清空）
         self.apply_on_top(self.stats.settings["on_top"], init=True)
@@ -804,6 +1066,7 @@ class Pet(QWidget):
         if text:
             if self.mode in ("hidden", "fading"):
                 return
+            text = fill(text)
             self.bubble.say(text, self.stats.settings.get("bubble", "paper"), max(1, self.scale // 2), icon, hold_ms)
 
     def is_sleep_time(self):
@@ -1076,7 +1339,7 @@ class Pet(QWidget):
             return
         pre = self.wake_prefix()
         if s.gift_stock == 0:
-            msg = (pick("no_gift") or "禮物送完了，{h} 後補一個。").format(h=fmt_hours(s.gift_eta() / TIME_SCALE))
+            msg = fill(pick("no_gift") or "禮物送完了，{h} 後補一個。", h=fmt_hours(s.gift_eta() / TIME_SCALE))
             if pre:
                 self.react(pre + [("idle", 1, msg)])
             else:
@@ -1156,12 +1419,21 @@ class Pet(QWidget):
 
         # 數值
         s.tick(dt * TIME_SCALE, awake=self.mode != "sleep")
+        k, c = self.counter.take()
+        if k or c:
+            s.keys_today += k; s.clicks_today += c
+            self.brain_keys[0] += k; self.brain_keys[1] += c
+            self.key_hist.append((now, k))
+            self.last_activity = now
         rate = ENERGY_RATE.get(self.anim_name, 0.0)
         s.energy = max(0.0, min(100.0, s.energy + rate * dt * TIME_SCALE ** 0.5))
         if now - self.stat_save_t > 60:
             self.stat_save_t = now
             s.settings["x"] = int(self.cx)
             s.save()
+            if self.brain is not None and any(self.brain_keys):
+                self.brain.log("keys", self.brain_keys[0]); self.brain.log("clicks", self.brain_keys[1])
+                self.brain_keys = [0, 0]
             if self.brain is not None and self.brain.enabled:
                 self.brain.save()
         if self.brain is not None:
@@ -1175,6 +1447,7 @@ class Pet(QWidget):
         g = self.screen_geo()
         floor = g.bottom() + 1
         self.check_sitting(now)
+        self.check_typing(now)
         self.check_chime()
 
         if self.mode == "held":
@@ -1234,15 +1507,59 @@ class Pet(QWidget):
         if changed:
             self.redraw()
 
+    def days_together(self):
+        try:
+            return (date.today() - date.fromisoformat(self.stats.first_day)).days + 1
+        except ValueError:
+            return 1
+
+    def special_events(self):
+        """生日、紀念日：一天一次，醒著、閒著的時候說（不受「偶爾自言自語」影響）。有說就回傳 True。"""
+        s, today = self.stats, date.today().isoformat()
+        if self.mode != "normal" or self.bubble.isVisible():
+            return False
+        if birthday_today(s.profile) and s.special_done.get("birthday") != today:
+            s.special_done["birthday"] = today
+            s.gift_stock, s.gift_timer = GIFT_MAX, 0.0            # 生日：禮物補滿
+            if self.brain is not None:
+                self.brain.log("birthday")
+            line = pick("birthday") or "{name}，生日快樂。"
+            self.react([("peace" if self.has("peace") else "idle", 1, line)])
+            s.save()
+            return True
+        d = self.days_together()
+        if is_anniversary(d) and s.special_done.get("anniversary") != today:
+            s.special_done["anniversary"] = today
+            line = fill(pick("anniversary") or "今天是我們認識的第 {d} 天。", d=d)
+            self.say(line)
+            return True
+        return False
+
     def idle_events(self, now):
         s = self.stats
-        if not s.settings.get("chat", True) or self.mode != "normal" or now < self.next_chat:
+        if self.mode != "normal" or now < self.next_chat:
+            return
+        if now - self.started_at > 20 and self.special_events():
+            self.next_chat = now + random.uniform(180, 420)
+            return
+        if not s.settings.get("chat", True):
             return
         self.next_chat = now + random.uniform(180, 420)
         m = minute_of_day()
         today = date.today().isoformat()
-        for key, ok in (("morning", 7 * 60 <= m < 9 * 60), ("lunch", 11 * 60 + 50 <= m < 12 * 60 + 30),
-                        ("late", is_pre_sleep(m) and m >= 22 * 60)):
+        if (s.settings.get("count_input", True) and s.keys_today + s.clicks_today >= 100
+                and in_span(m, SCHED["bed"] - 45, SCHED["bed"]) and s.special_done.get("recap") != today):
+            s.special_done["recap"] = today                       # 睡前回顧今天敲了幾下
+            self.say(fill(pick("input_recap") or "今天敲了 {keys} 下鍵盤、點了 {clicks} 下滑鼠。",
+                          keys=f"{s.keys_today:,}", clicks=f"{s.clicks_today:,}"), ambient=True)
+            return
+        if not OWNER["name"] and not s.asked_name and now - self.started_at > 15 * 60:
+            s.asked_name = True                                  # 還不知道名字：問一次
+            self.say(pick("ask_name") or "……我還不知道你叫什麼名字。（選單 → 設定 → 主人資料）", ambient=True)
+            return
+        for key, ok in (("morning", in_span(m, SCHED["wake"], SCHED["wake"] + 120)),
+                        ("lunch", 11 * 60 + 50 <= m < 12 * 60 + 30),
+                        ("late", is_pre_bed(m))):
             if ok and (key, today) not in self.said_today:
                 self.said_today.add((key, today))
                 self.say(pick(key), ambient=True); return
@@ -1321,7 +1638,8 @@ class Pet(QWidget):
     # ---------- 久坐提醒、整點報時 ----------
     def check_sitting(self, now):
         cur = QCursor.pos()
-        if cur != self.last_cursor:
+        typed = getattr(self, "last_activity", 0) > self.last_move     # 有按鍵盤或點滑鼠
+        if cur != self.last_cursor or typed:
             self.last_cursor = cur
             if self.brain is not None and now - self.last_move > 30:
                 self.brain.log("active")
@@ -1340,7 +1658,25 @@ class Pet(QWidget):
             if self.brain is not None:
                 self.brain.log("sit")
             mins = int((now - self.sit_start) * TIME_SCALE // 60)
-            self.react([("stretch", 2, (pick("sit") or "坐 {m} 分鐘了，起來動一動吧。").format(m=mins))])
+            self.react([("stretch", 2, fill(pick("sit") or "坐 {m} 分鐘了，起來動一動吧。", m=mins))])
+
+    def check_typing(self, now):
+        """連續 3 分鐘每分鐘都打超過 150 下：她偶爾說一句、在旁邊練剪刀。30 分鐘最多一次。"""
+        self.key_hist = [(t, k) for t, k in self.key_hist if now - t <= 60]
+        kpm = sum(k for _, k in self.key_hist)
+        if kpm < 150:
+            self.typing_since = None
+            return
+        if self.typing_since is None:
+            self.typing_since = now
+        if now - self.typing_since < 3 * 60 or now < self.next_typing:
+            return
+        if self.mode != "normal" or self.bubble.isVisible() or not self.stats.settings.get("chat", True):
+            return
+        self.next_typing = now + 30 * 60
+        line = pick("typing")
+        anim = "swing" if self.has("swing") and not self.stats.settings.get("stay") else "read"
+        self.react([(anim if self.has(anim) else "idle", 2, line)])
 
     def check_chime(self):
         h = minute_of_day() // 60
@@ -1398,6 +1734,8 @@ class Pet(QWidget):
         info.setEnabled(False)
         menu.addSeparator()
         st = menu.addMenu("設定")
+        st.addAction("主人資料…", self.show_profile)
+        st.addSeparator()
         size = st.addMenu("大小")
         grp = QActionGroup(size)
         for k in (2, 3, 4, 5, 6, 8):
@@ -1431,7 +1769,7 @@ class Pet(QWidget):
         a.triggered.connect(lambda on: self.set_stay(on))
         st.addAction(a)
         for label, key, fn in (("永遠在最上層", "on_top", self.apply_on_top),
-                               ("照時間作息（午睡、晚上睡覺）", "schedule", self.set_schedule),
+                               ("照時間作息（時間在「主人資料」裡改）", "schedule", self.set_schedule),
                                ("偶爾自言自語", "chat", None),
                                ("整點報時", "chime", None),
                                ("會爬螢幕邊緣", "climb", None)):
@@ -1452,6 +1790,10 @@ class Pet(QWidget):
                 cgrp.addAction(a); cm.addAction(a)
         if self.brain is not None:
             self.build_llm_menu(st.addMenu("小模型（AI）"))
+        a = QAction("統計鍵盤滑鼠次數（只算次數）", st, checkable=True,
+                    checked=bool(self.stats.settings.get("count_input", True)))
+        a.triggered.connect(self.set_count_input)
+        st.addAction(a)
         a = QAction("開機自動啟動", st, checkable=True, checked=autostart_enabled())
         a.triggered.connect(set_autostart)
         st.addAction(a)
@@ -1502,6 +1844,34 @@ class Pet(QWidget):
         if not quiet:
             self.say(pick("passthrough_on" if on else "passthrough_off")
                      or ("那我就不打擾你點東西了。" if on else "又可以碰到我了。"))
+
+    def show_profile(self):
+        if self.profile_dialog is None:
+            self.profile_dialog = ProfileDialog(self)
+        self.profile_dialog.show(); self.profile_dialog.raise_(); self.profile_dialog.activateWindow()
+
+    def set_profile(self, p, renamed=False):
+        self.stats.profile.update(p)
+        apply_profile(self.stats.profile)
+        self.stats.save()
+        if self.brain is not None:
+            self.brain.profile = self.stats.profile
+        if self.mode == "sleep" and not self.should_sleep():          # 改了作息：現在不是睡覺時間就醒來
+            self.react([("sleepy", 1, None)])
+        elif self.mode == "normal" and self.stats.settings["schedule"] and self.should_sleep():
+            self.enter_sleep()
+            return
+        if self.mode in ("normal", "react"):
+            self.say(pick("profile_named" if renamed and OWNER["name"] else "profile_saved")
+                     or ("……記住了，{name}。" if renamed and OWNER["name"] else "……記下來了。"))
+
+    def set_count_input(self, on):
+        self.stats.settings["count_input"] = bool(on)
+        if on:
+            if not self.counter.start():
+                self.say("……" + self.counter.error + "。")
+        else:
+            self.counter.stop()
 
     def set_scale(self, k):
         self.scale_was = self.scale
@@ -1682,6 +2052,7 @@ class Pet(QWidget):
         self.app.quit()
 
     def quit(self):
+        self.counter.stop()
         self.stats.settings["x"] = int(self.cx)
         self.stats.save()
         self.app.quit()

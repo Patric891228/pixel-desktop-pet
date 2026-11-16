@@ -155,6 +155,14 @@ characters/
 | `hide` / `back` | 暫時躲起來／回來 |
 | `pin_go` | 走去固定位置 |
 | `passthrough_on` / `passthrough_off` | 開／關滑鼠穿透 |
+| `birthday` | 主人生日當天（禮物會補滿） |
+| `anniversary` | 認識第 7、30、100、365 天這類紀念日，`{d}` = 第幾天 |
+| `typing` | 主人連續打字很認真（她會在旁邊練習） |
+| `input_recap` | 睡前回顧今天的輸入，`{keys}` = 鍵盤次數、`{clicks}` = 滑鼠次數 |
+| `ask_name` | 還不知道主人名字時問一次 |
+| `profile_saved` / `profile_named` | 存好主人資料／剛知道名字 |
+
+**主人的名字**：任何台詞都可以寫 `{name}`，會換成「主人資料」裡的名字。沒填名字時，`{name}，` 整段會拿掉，其他的 `{name}` 換成「你」，所以 `{name}，早安。` 沒名字時會變成 `早安。`。
 
 ### 人設（persona，選填）
 

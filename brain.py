@@ -279,8 +279,9 @@ def _fix_symlinks(z, bin_dir):
 
 # ===== 本體 =====
 class Brain:
-    def __init__(self, conf_dir, char, settings, char_id):
+    def __init__(self, conf_dir, char, settings, char_id, profile=None):
         self.char, self.settings = char, settings
+        self.profile = profile or {}       # 主人資料：名字、生日、作息（desktop_pet 的 Stats.profile）
         self.persona = char.get("persona") or {}
         self.name = char.get("name", "她")
         self.dir = os.path.join(conf_dir, "llm")
@@ -392,6 +393,8 @@ class Brain:
             d["last"] = hm
         elif what == "gift":
             d.setdefault("gifts", []).append(value)
+        elif what in ("keys", "clicks"):
+            d[what] = d.get(what, 0) + int(value or 0)
         else:
             d[what] = d.get(what, 0) + 1
 
@@ -412,6 +415,25 @@ class Brain:
             out.append("送了她：" + "、".join(dict.fromkeys(d["gifts"])))
         if d.get("sit"):
             out.append(f"因為坐太久被她提醒了 {d['sit']} 次")
+        if d.get("keys", 0) + d.get("clicks", 0) >= 100:
+            out.append(f"敲了鍵盤 {d.get('keys', 0)} 下、點了滑鼠 {d.get('clicks', 0)} 下")
+        if d.get("birthday"):
+            out.append("是使用者的生日")
+        return out
+
+    def owner_facts(self):
+        """主人資料整理成給模型看的幾句話。"""
+        p, out = self.profile, []
+        name = (p.get("name") or "").strip()
+        if name:
+            out.append(f"使用者的名字是「{name}」")
+        b = p.get("birthday") or ""
+        if len(b) == 5:
+            out.append(f"使用者的生日是 {int(b[:2])} 月 {int(b[3:])} 日")
+            if date.today().strftime("%m-%d") == b:
+                out.append("今天就是使用者的生日")
+        if p.get("wake") and p.get("bed"):
+            out.append(f"使用者通常 {p['wake']} 起床、{p['bed']} 睡覺")
         return out
 
     # ---------- 台詞換新 ----------
@@ -551,7 +573,8 @@ class Brain:
         tone = p.get("tone", {}).get(self.tier(affection), "")
         rules = [f"只用繁體中文（台灣用語），一次只說一句話，{self.max_chars} 個字以內",
                  "不要用表情符號、不要加引號、不要在句子前面寫名字",
-                 "不要提到自己是 AI、模型或程式", "你是待在使用者電腦桌面上的小角色，稱呼使用者為「你」",
+                 "不要提到自己是 AI、模型或程式", "你是待在使用者電腦桌面上的小角色，稱呼使用者為「你」"
+                 + ("，偶爾可以叫他的名字" if (self.profile.get("name") or "").strip() else ""),
                  "角色設定裡沒寫的事（家人、過去、朋友的細節）不要自己編，用你的語氣含糊帶過或說不想講"]
         rules += p.get("rules", [])
         ex = [l for k, v in self.char.get("lines", {}).items() if "@" not in k
@@ -562,6 +585,9 @@ class Brain:
         if prof:
             s += "角色設定：\n" + "\n".join(f"- {k}：{'、'.join(v) if isinstance(v, list) else v}"
                                          for k, v in prof.items()) + "\n"
+        owner = self.owner_facts()
+        if owner:
+            s += "你記得的使用者資料：\n" + "\n".join(f"- {x}" for x in owner) + "\n"
         if p.get("speech"):
             s += f"說話方式：{p['speech']}\n"
         if tone:

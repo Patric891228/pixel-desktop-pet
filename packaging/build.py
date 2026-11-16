@@ -15,6 +15,14 @@ try:                                               # 簡轉繁的字典檔（小
     args += ["--collect-data", "opencc"]
 except ImportError:
     pass
+try:                                               # 鍵盤滑鼠計數：pynput 依系統載入不同後端，要明確帶進去
+    import importlib.util
+    if importlib.util.find_spec("pynput"):
+        be = {"win32": "win32", "darwin": "darwin"}.get(sys.platform, "xorg")
+        for mod in ("keyboard", "mouse", "_util"):
+            args += ["--hidden-import", f"pynput.{mod}._{be}" if mod != "_util" else f"pynput._util.{be}"]
+except ImportError:
+    pass
 if sys.platform == "darwin":
     args += ["--icon", "packaging/icon.icns", "--osx-bundle-identifier", "com.chisa-desktop-pet"]
 else:

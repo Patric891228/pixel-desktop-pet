@@ -384,47 +384,58 @@ class Stats:
 
 # ===== 素材 =====
 ACC_DIR = os.path.join(CHAR_DIR, "accessories")
-# 配件部位：疊圖順序由下往上（衣服換色最先，頭上的最後）
-ACC_SLOTS = [("outfit", "服裝"), ("hands", "手套"), ("neck", "脖子"), ("face", "口罩"), ("eyes", "眼鏡"), ("head", "頭上")]
+# 配件部位：疊圖順序由下往上（剪刀造型最先、再來衣服換色，頭上的最後）
+ACC_SLOTS = [("weapon", "剪刀"), ("outfit", "服裝"), ("hands", "手套"), ("neck", "脖子"), ("face", "口罩"),
+             ("eyes", "眼鏡"), ("head", "頭上")]
 
 
 def load_accessories():
-    """角色包的 accessories/items.json：{"items": [{id, name, slot}], "sets": [{name, items: {slot: id}}]}。"""
+    """角色包的 accessories/items.json：
+    {"items": [{id, name, slot}], "sets": [{name, items: {slot: id}}], "defaults": {slot: id}}。
+    每個配件資料夾裡：<動作>.png 疊上去、<動作>_erase.png 先擦掉的格子、<動作>_top.png 所有配件畫完後再蓋一次。
+    defaults 是部位沒選東西時用的（例如原本的剪刀要蓋在換色的制服上面）。"""
     try:
         d = json.load(open(os.path.join(ACC_DIR, "items.json"), encoding="utf-8"))
     except (OSError, ValueError):
-        return [], []
+        return [], [], {}
     if isinstance(d, list):
         d = {"items": d}
     items = [it for it in d.get("items", []) if os.path.isdir(os.path.join(ACC_DIR, it.get("id", "")))]
     ids = {it["id"] for it in items}
     sets = [st for st in d.get("sets", []) if all(i in ids for i in st.get("items", {}).values())]
-    return items, sets
+    defaults = {k: v for k, v in d.get("defaults", {}).items() if v in ids}
+    return items, sets, defaults
 
 
 class Sprites:
     def __init__(self, worn=None):
         self.meta = json.load(open(os.path.join(ASSETS, "anims.json"), encoding="utf-8"))
         self.base = {n: QPixmap(os.path.join(ASSETS, n + ".png")) for n in self.meta}
-        self.acc_items, self.acc_sets = load_accessories()
+        self.acc_items, self.acc_sets, self.acc_defaults = load_accessories()
         self.cache = {}
         self.set_worn(worn or {})
 
     def set_worn(self, worn):
         """worn：{部位: 配件 id}。把配件疊圖畫到每個動作圖上（動作圖改了、配件換了都重畫）。"""
         known = {it["id"]: it["slot"] for it in self.acc_items}
-        self.worn = {slot: i for slot, i in worn.items() if known.get(i) == slot}
-        order = [self.worn[s] for s, _ in ACC_SLOTS if s in self.worn]
+        self.worn = {slot: i for slot, i in worn.items() if known.get(i) == slot and i != self.acc_defaults.get(slot)}
+        order = [self.worn.get(s) or self.acc_defaults.get(s) for s, _ in ACC_SLOTS]
+        order = [i for i in order if i]
         self.sheets = {}
         for n, pix in self.base.items():
-            layers = [p for p in (os.path.join(ACC_DIR, i, n + ".png") for i in order) if os.path.exists(p)]
-            if not layers:
-                self.sheets[n] = pix
+            f = lambda i, k="": os.path.join(ACC_DIR, i, n + k + ".png")
+            steps = [(i, k) for k in ("_erase", "") for i in order if os.path.exists(f(i, k))]
+            steps.sort(key=lambda s: order.index(s[0]))                   # 同一個配件：先擦再疊
+            steps += [(i, "_top") for i in order if os.path.exists(f(i, "_top"))]
+            if not any(k != "_top" for _, k in steps) and not (self.worn and steps):
+                self.sheets[n] = pix                                      # 沒戴配件：原圖
                 continue
             out = QPixmap(pix)
             p = QPainter(out)
-            for f in layers:
-                p.drawPixmap(0, 0, QPixmap(f))
+            for i, k in steps:
+                p.setCompositionMode(QPainter.CompositionMode_DestinationOut if k == "_erase"
+                                     else QPainter.CompositionMode_SourceOver)
+                p.drawPixmap(0, 0, QPixmap(f(i, k)))
             p.end()
             self.sheets[n] = out
         self.cache.clear()
@@ -1859,7 +1870,9 @@ class Pet(QWidget):
                 continue
             sm = am.addMenu(label)
             grp = QActionGroup(sm)
-            for iid, name in [(None, "不戴")] + [(it["id"], it["name"]) for it in items]:
+            dflt = self.sprites.acc_defaults.get(slot)
+            none = next((it["name"] for it in items if it["id"] == dflt), "不戴")
+            for iid, name in [(None, none)] + [(it["id"], it["name"]) for it in items if it["id"] != dflt]:
                 a = QAction(name, sm, checkable=True, checked=worn.get(slot) == iid)
                 a.triggered.connect(lambda _=False, slot=slot, iid=iid: self.wear(slot, iid))
                 grp.addAction(a); sm.addAction(a)

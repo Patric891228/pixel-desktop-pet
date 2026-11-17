@@ -6,10 +6,12 @@
 import base64, hashlib, html, json, sys
 from pathlib import Path
 
+SLOTS = ["weapon", "outfit", "hands", "neck", "face", "eyes", "head"]     # 疊圖順序（同 desktop_pet.ACC_SLOTS）
 SHOW = {"head": ["idle", "walk", "headpat", "read", "desk_sleep_r", "swing"],
         "neck": ["idle", "walk", "run", "read", "bed_sleep_r", "swing"],
         "hands": ["idle", "peace", "stretch", "read", "hang", "gift"],
         "face": ["idle", "walk", "sleepy", "read", "desk_sleep_r", "peek"],
+        "weapon": ["swing", "walk_weapon", "run_weapon", "draw_weapon", "sheath", "idle"],
         "outfit": ["idle", "walk", "headpat", "read", "bed_sleep_r", "swing"]}
 
 
@@ -25,20 +27,25 @@ def main():
     char = json.loads((cdir / "character.json").read_text(encoding="utf-8"))
     anims = json.loads((cdir / "assets" / "anims.json").read_text(encoding="utf-8"))
     acc = cdir / "accessories"
-    items = json.loads((acc / "items.json").read_text(encoding="utf-8"))
-    items = items["items"] if isinstance(items, dict) else items
     base = {n: dict(m, src=b64(cdir / "assets" / f"{n}.png")) for n, m in anims.items()}
+    meta = json.loads((acc / "items.json").read_text(encoding="utf-8"))
+    items = meta["items"] if isinstance(meta, dict) else meta
+    defaults = meta.get("defaults", {}) if isinstance(meta, dict) else {}
     byid = {it["id"]: it for it in items}
-    want = sys.argv[3:] or [it["id"] for it in items]       # 「a+b」表示疊在一起看（套裝）
+    want = sys.argv[3:] or [it["id"] for it in items if it["id"] not in defaults.values()]   # 「a+b」表示疊在一起看
     cards = []
     for key in want:
         ids = key.split("+")
+        worn = {byid[i]["slot"]: i for i in ids}
+        order = [worn.get(s) or defaults.get(s) for s in SLOTS]
+        order = [i for i in order if i]
         ov, h = {}, hashlib.sha1()
-        for iid in ids:
-            for n in anims:
-                p = acc / iid / f"{n}.png"
-                if p.exists():
-                    ov.setdefault(n, []).append(b64(p)); h.update(p.read_bytes())
+        for n in anims:                                   # 跟 desktop_pet.Sprites.set_worn 同樣的順序
+            steps = [(i, k) for i in order for k in ("_erase", "") if (acc / i / f"{n}{k}.png").exists()]
+            steps += [(i, "_top") for i in order if (acc / i / f"{n}_top.png").exists()]
+            for i, k in steps:
+                p = acc / i / f"{n}{k}.png"
+                ov.setdefault(n, []).append([b64(p), k == "_erase"]); h.update(p.read_bytes())
         names = "＋".join(byid[i]["name"] for i in ids)
         cards.append(dict(id=key, name=names, slot=byid[ids[0]]["slot"], ov=ov, hash=h.hexdigest()[:10]))
     page = TEMPLATE.replace("__TITLE__", html.escape(char.get("name", cdir.name))) \
@@ -97,7 +104,8 @@ function player(card,getName){
     if(now-t>m.ms[f]/speed){t=now;f=(f+1)%m.frames}
     x.imageSmoothingEnabled=false;x.clearRect(0,0,cv.width,cv.height);
     x.drawImage(img(m.src),f*m.w,0,m.w,m.h,0,0,m.w*S,m.h*S);
-    if(!cmp)for(const o of card.ov[n]||[])x.drawImage(img(o),f*m.w,0,m.w,m.h,0,0,m.w*S,m.h*S)});
+    if(!cmp)for(const [o,er] of card.ov[n]||[]){x.globalCompositeOperation=er?'destination-out':'source-over';x.drawImage(img(o),f*m.w,0,m.w,m.h,0,0,m.w*S,m.h*S)}
+    x.globalCompositeOperation='source-over'});
   return st}
 const root=document.getElementById('root');
 for(const c of CARDS){

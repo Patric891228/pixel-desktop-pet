@@ -96,6 +96,61 @@
    "slot": "head"
   },
   {
+   "id": "blade_default",
+   "name": "原本的剪刀",
+   "slot": "weapon"
+  },
+  {
+   "id": "blade_silver",
+   "name": "銀白剪刀",
+   "slot": "weapon"
+  },
+  {
+   "id": "blade_sakura",
+   "name": "櫻花粉剪刀",
+   "slot": "weapon"
+  },
+  {
+   "id": "blade_ice",
+   "name": "冰藍剪刀",
+   "slot": "weapon"
+  },
+  {
+   "id": "blade_gold",
+   "name": "黃金剪刀",
+   "slot": "weapon"
+  },
+  {
+   "id": "blade_void",
+   "name": "湮滅紫剪刀",
+   "slot": "weapon"
+  },
+  {
+   "id": "garden_green",
+   "name": "園藝剪刀（綠）",
+   "slot": "weapon"
+  },
+  {
+   "id": "garden_orange",
+   "name": "園藝剪刀（橘）",
+   "slot": "weapon"
+  },
+  {
+   "id": "kids_yellow",
+   "name": "兒童剪刀（黃）",
+   "slot": "weapon"
+  },
+  {
+   "id": "kids_blue",
+   "name": "兒童剪刀（藍）",
+   "slot": "weapon"
+  },
+  {
+   "id": "kids_pink",
+   "name": "兒童剪刀（粉）",
+   "slot": "weapon"
+  },
+  {
    "id": "gloves_white",
    "name": "白手套",
    "slot": "hands"
@@ -129,5 +184,8 @@
     "head": "hat_santa"
    }
   }
- ]
+ ],
+ "defaults": {
+  "weapon": "blade_default"
+ }
 }

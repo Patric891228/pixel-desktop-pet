@@ -6,7 +6,7 @@
 
 用法（在角色資料夾）：python3 art/make_accessories.py assets accessories
 """
-import json, os, sys
+import json, os, subprocess, sys, tempfile
 from PIL import Image
 
 OUTLINE = (16, 12, 24)
@@ -93,13 +93,20 @@ def mirror(rows):
 
 class Layer:
     anim = ""
+    index = 0
 
     def __init__(self, base):
         self.base = base
         self.w, self.h = base.size
         self.img = Image.new("RGBA", base.size, (0, 0, 0, 0))
+        self.erase = Image.new("RGBA", base.size, (0, 0, 0, 0))     # 要擦成透明的格子
+        self.top = Image.new("RGBA", base.size, (0, 0, 0, 0))       # 其他配件畫完後再蓋一次的格子
         self.bp = base.load()
         self.p = self.img.load()
+
+    def frame_of(self, sheets):
+        """從另一組動作圖（同樣大小）取出這一格。"""
+        return sheets[self.anim].crop((self.index * self.w, 0, (self.index + 1) * self.w, self.h))
 
     def put(self, x, y, rgb):
         if 0 <= x < self.w and 0 <= y < self.h:
@@ -276,6 +283,60 @@ def glasses(frame, glint=(255, 255, 255)):
     return draw
 
 
+# ---------------------------------------------------------------- 剪刀
+# art/weapon_mask.py 用記號色把剪刀（各種造型）重畫一次，對照原本的動作圖就知道每一格要：
+#   疊上去的格子（新的刀、刀移開後露出來的身體）、要擦掉的格子（原本的刀伸出去、新的刀沒有的地方）、
+#   以及「刀本身」（最後再蓋一次，才不會被制服換色蓋掉）。
+WEAPON_ANIMS = ("swing", "run_weapon", "walk_weapon", "draw_weapon", "sheath")
+MARK = {(255, 0, 0): "red", (0, 255, 0): "red_dk", (0, 0, 255): "black", (255, 0, 255): "edge",
+        (0, 255, 255): "pivot", (255, 255, 0): "grip", (128, 0, 255): "grip_dk", (255, 128, 0): "metal",
+        (0, 128, 255): "metal_dk"}
+ORIGINAL = {"red": (240, 52, 60), "red_dk": (140, 10, 30), "black": (38, 36, 44), "edge": (96, 94, 112),
+            "pivot": (222, 178, 64)}
+_RENDER = {}
+
+
+def weapon_render(shape):
+    """{動作: 用記號色畫的動作圖}；每種造型只算一次。"""
+    if shape not in _RENDER:
+        tmp = tempfile.mkdtemp()
+        here = os.path.dirname(os.path.abspath(__file__))
+        subprocess.run([sys.executable, os.path.join(here, "weapon_mask.py"), shape, tmp], check=True,
+                       stdout=subprocess.DEVNULL)
+        subprocess.run([sys.executable, os.path.join(here, "..", "..", "..", "tools", "finish_assets.py"), tmp,
+                        "--fix-top"], check=True, stdout=subprocess.DEVNULL)
+        _RENDER[shape] = {n: Image.open(os.path.join(tmp, n + ".png")).convert("RGBA") for n in WEAPON_ANIMS}
+    return _RENDER[shape]
+
+
+def blade(shape="classic", **colors):
+    """shape：classic／garden／kids；colors：各部位的顏色（沒給的用原本的顏色）。"""
+    pal = dict(ORIGINAL, black=(38, 36, 44), grip=(240, 52, 60), grip_dk=(140, 10, 30),
+               metal=(224, 228, 240), metal_dk=(150, 156, 178))
+    pal.update(colors)
+
+    def draw(L, view, hx, hy):
+        if L.anim not in WEAPON_ANIMS:
+            return
+        r = L.frame_of(weapon_render(shape)).load()
+        for y in range(L.h):
+            for x in range(L.w):
+                c, b = r[x, y], L.bp[x, y]
+                if c[3] and c[:3] in MARK:
+                    col = pal[MARK[c[:3]]]
+                    L.top.putpixel((x, y), col + (255,))
+                    if col != b[:3] or not b[3]:
+                        L.put(x, y, col)
+                elif c != b and not (c[3] == 0 and b[3] == 0):
+                    if c[3]:
+                        L.put(x, y, c[:3])
+                    else:
+                        L.erase.putpixel((x, y), (0, 0, 0, 255))
+    draw.outline = False
+    draw.raw = True
+    return draw
+
+
 # ---------------------------------------------------------------- 衣服換色
 COAT, TRIM, SKIRT = (38, 36, 44), (96, 94, 112), (32, 34, 62)
 
@@ -298,22 +359,21 @@ def outfit(coat, trim, skirt, sock=None):
         knees = []
         find_hands(L.base, L.anim, [view, hx, hy], knees)
         keep = socks(L, knees)
-        wide = L.w > 48                       # 拿武器的寬圖：刀身也是黑色，只換角色身上的
+        # 拿剪刀的動作：照「沒拿剪刀」的版本換色（刀移開的地方也換到），刀最後由剪刀那層蓋回去
+        body = L.frame_of(weapon_render("none")).load() if L.anim in WEAPON_ANIMS else L.bp
         for y in range(L.h):
             for x in range(L.w):
-                c = L.bp[x, y]
+                c = body[x, y]
                 if not c[3]:
                     continue
                 c = c[:3]
                 if y < hy + 9 and abs(x - hx) < 14:      # 頭
                     continue
-                if wide and x > hx + 6:
-                    continue
                 if c == COAT:
                     L.put(x, y, coat)
                 elif c == SKIRT:
                     L.put(x, y, (sock or c) if (x, y) in keep else skirt)
-                elif c == TRIM and any(L.bp[x + dx, y + dy][:3] == COAT for dx, dy in N4
+                elif c == TRIM and any(body[x + dx, y + dy][:3] == COAT for dx, dy in N4
                                        if 0 <= x + dx < L.w and 0 <= y + dy < L.h):
                     L.put(x, y, trim)
     draw.outline = False
@@ -474,6 +534,27 @@ ITEMS = {
     "outfit_wine": ("酒紅制服", "outfit", outfit((110, 30, 46), (196, 90, 104), (30, 28, 36))),
     "outfit_xmas": ("聖誕服", "outfit", outfit((204, 34, 46), (255, 255, 255), (132, 18, 34))),
     "hat_santa": ("聖誕帽", "head", santa_hat()),
+    "blade_default": ("原本的剪刀", "weapon", blade()),
+    "blade_silver": ("銀白剪刀", "weapon", blade(red=(224, 228, 240), red_dk=(150, 156, 178), black=(104, 110, 132),
+                                               edge=(196, 202, 220))),
+    "blade_sakura": ("櫻花粉剪刀", "weapon", blade(red=(255, 172, 202), red_dk=(214, 98, 148), black=(250, 236, 242),
+                                                edge=(236, 186, 206))),
+    "blade_ice": ("冰藍剪刀", "weapon", blade(red=(130, 206, 255), red_dk=(40, 112, 204), black=(30, 46, 96),
+                                           edge=(150, 200, 255), pivot=(255, 255, 255))),
+    "blade_gold": ("黃金剪刀", "weapon", blade(red=(244, 204, 84), red_dk=(178, 126, 30), black=(70, 46, 24),
+                                            edge=(204, 162, 72), pivot=(240, 52, 60))),
+    "blade_void": ("湮滅紫剪刀", "weapon", blade(red=(176, 96, 236), red_dk=(92, 32, 144), black=(34, 22, 48),
+                                              edge=(124, 84, 176), pivot=(100, 230, 240))),
+    "garden_green": ("園藝剪刀（綠）", "weapon", blade("garden", grip=(76, 156, 84), grip_dk=(40, 96, 50),
+                                                   edge=(255, 255, 255))),
+    "garden_orange": ("園藝剪刀（橘）", "weapon", blade("garden", grip=(244, 140, 50), grip_dk=(180, 86, 30),
+                                                    edge=(255, 255, 255))),
+    "kids_yellow": ("兒童剪刀（黃）", "weapon", blade("kids", grip=(252, 206, 60), grip_dk=(206, 150, 30),
+                                                 edge=(255, 255, 255), pivot=(255, 255, 255))),
+    "kids_blue": ("兒童剪刀（藍）", "weapon", blade("kids", grip=(84, 156, 244), grip_dk=(40, 94, 184),
+                                               edge=(255, 255, 255), pivot=(255, 255, 255))),
+    "kids_pink": ("兒童剪刀（粉）", "weapon", blade("kids", grip=(250, 150, 190), grip_dk=(212, 98, 150),
+                                               edge=(255, 255, 255), pivot=(255, 255, 255))),
     "gloves_white": ("白手套", "hands", gloves((255, 255, 255), (206, 206, 222))),
     "gloves_red": ("紅手套", "hands", gloves((220, 48, 56), (150, 20, 36))),
     "gloves_pink": ("粉紅手套", "hands", gloves((244, 160, 190), (210, 110, 150))),
@@ -484,6 +565,8 @@ ITEMS = {
 
 # 套裝：選單裡一次穿上好幾個部位
 SETS = [{"name": "聖誕套裝", "items": {"outfit": "outfit_xmas", "head": "hat_santa"}}]
+# 部位沒選東西時用的預設（不會出現在選單清單裡，選單上顯示成它的名字）：原本的剪刀要在制服換色之後蓋回去
+DEFAULTS = {"weapon": "blade_default"}
 
 
 def anchors(assets):
@@ -511,14 +594,18 @@ def build(assets, outdir, only=None):
         os.makedirs(d, exist_ok=True)
         for n, m in meta.items():
             sheet = Image.open(os.path.join(assets, n + ".png")).convert("RGBA")
-            strip = Image.new("RGBA", sheet.size, (0, 0, 0, 0))
+            strips = {k: Image.new("RGBA", sheet.size, (0, 0, 0, 0)) for k in ("", "_erase", "_top")}
             Layer.anim = n
             for i, a in enumerate(anc[n]):
-                if not a:
-                    continue
+                Layer.index = i
                 base = sheet.crop((i * m["w"], 0, (i + 1) * m["w"], m["h"]))
-                view, hx, hy = a
-                if view == "side_l":          # 朝左的側面：把圖翻過來當朝右畫，畫完再翻回去
+                if getattr(draw, "raw", False):
+                    L = Layer(base)
+                    draw(L, None, 0, 0)
+                elif not a:
+                    continue
+                elif a[0] == "side_l":        # 朝左的側面：把圖翻過來當朝右畫，畫完再翻回去
+                    view, hx, hy = a
                     L = Layer(base.transpose(Image.FLIP_LEFT_RIGHT))
                     if getattr(draw, "hands", False):
                         L.hands = find_hands(L.base, n, ["side", m["w"] - 1 - hx, hy])
@@ -528,6 +615,7 @@ def build(assets, outdir, only=None):
                     L.img = L.img.transpose(Image.FLIP_LEFT_RIGHT)
                     L.p = L.img.load()
                 else:
+                    view, hx, hy = a
                     L = Layer(base)
                     if getattr(draw, "hands", False):
                         L.hands = find_hands(base, n, a)
@@ -536,9 +624,14 @@ def build(assets, outdir, only=None):
                         L.auto_outline()
                 for box in HIDE.get(n, {}).get(i, ()):
                     L.hide(box)
-                strip.alpha_composite(L.img, (i * m["w"], 0))
-            strip.save(os.path.join(d, n + ".png"), optimize=True)
-    json.dump({"items": [{"id": k, "name": v[0], "slot": v[1]} for k, v in ITEMS.items()], "sets": SETS},
+                strips[""].alpha_composite(L.img, (i * m["w"], 0))
+                strips["_erase"].alpha_composite(L.erase, (i * m["w"], 0))
+                strips["_top"].alpha_composite(L.top, (i * m["w"], 0))
+            for k, im in strips.items():
+                if im.getbbox():
+                    im.save(os.path.join(d, n + k + ".png"), optimize=True)
+    json.dump({"items": [{"id": k, "name": v[0], "slot": v[1]} for k, v in ITEMS.items()], "sets": SETS,
+               "defaults": DEFAULTS},
               open(os.path.join(outdir, "items.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     return anc
 

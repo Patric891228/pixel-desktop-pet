@@ -9,7 +9,7 @@ from pathlib import Path
 SLOTS = ["weapon", "outfit", "hands", "neck", "face", "eyes", "head"]     # 疊圖順序（同 desktop_pet.ACC_SLOTS）
 SHOW = {"head": ["idle", "walk", "headpat", "read", "desk_sleep_r", "swing"],
         "neck": ["idle", "walk", "run", "read", "bed_sleep_r", "swing"],
-        "hands": ["idle", "peace", "stretch", "read", "hang", "gift"],
+        "hands": ["idle", "peace", "stretch", "read", "shy", "gift"],
         "face": ["idle", "walk", "sleepy", "read", "desk_sleep_r", "peek"],
         "weapon": ["swing", "walk_weapon", "run_weapon", "draw_weapon", "sheath", "idle"],
         "outfit": ["idle", "walk", "headpat", "read", "bed_sleep_r", "swing"]}

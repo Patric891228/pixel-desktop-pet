@@ -155,17 +155,6 @@ def bed_out():
     )]
 
 
-# ---------- 7／8. 跳上牆、爬下來落地 ----------
-def wall_jump():
-    a = md.side_raw(dy=1, near=1, far=-1, lean=1)                             # 面對牆蹲低
-    b = md.side_raw(dy=-2, lean=2, near_lift=2, far_lift=1, hold=md.wall_arms(25, 10))   # 往上跳、伸手抓牆
-    return [md.finish_raw(a), md.finish_raw(b)]
-
-
-def wall_land():
-    return [md.finish_raw(md.side_raw(dy=1, near=1, far=-1))]                # 腳踩地、膝蓋彎一下
-
-
 # ---------- 9. 撲游標前：轉正、蹲低蓄力 ----------
 def crouch():
     return [fr(v6.front(dy=1, look=0, arms="grip")), fr(v6.front(dy=2, mouth="open", arms="grip"))]
@@ -189,8 +178,6 @@ CLIPS = {
     "desk_out": (desk_out, [300, 260, 300], 16),
     "bed_in": (bed_in, [450, 300, 300], None),
     "bed_out": (bed_out, [300, 260, 300], None),
-    "wall_jump": (wall_jump, [140, 160], None),
-    "wall_land": (wall_land, [180], None),
     "jolt": (jolt, [260, 300], None),
     "relax": (relax, [260], None),
 }

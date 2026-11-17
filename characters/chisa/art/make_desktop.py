@@ -184,36 +184,6 @@ def finish_raw(g, fx=None):
     return [[3 if c == 13 else c for c in row] for row in g]
 
 
-# ---------- 爬牆：側面朝右，牆在畫布右邊，雙手扶牆、腳踩牆，手腳交替往上 ----------
-def wall_arms(near_ang, far_ang):
-    """兩隻手往前伸到牆上（畫在頭前面，但位置在下巴下方）。"""
-    def f(g, ctx):
-        for ang, sy in ((far_ang, ctx["sy"] + 1), (near_ang, ctx["sy"])):
-            ex, ey = v4.arm_to(g, ctx["hip"] + 2, sy, ang, 9)
-            rect(g, round(ex) - 1, round(ey) - 1, round(ex), round(ey), 4)
-    return f
-
-
-def climb():
-    F = []
-    for k in range(4):
-        a, b = (12, -8) if k < 2 else (-8, 12)
-        g = side_raw(lean=2, near=3, far=3, near_lift=2 if k < 2 else 0, far_lift=0 if k < 2 else 2,
-                     dy=-1 if k % 2 else 0, hold=wall_arms(a, b))
-        F.append(finish_raw(g))
-    return F
-
-
-def hang():
-    """掛在牆上休息：雙手扶牆，腳一前一後晃，偶爾流汗往下看。"""
-    F = []
-    for k in range(4):
-        g = side_raw(lean=2, near=2 + (k % 2), far=1 - (k % 2), far_lift=1,
-                     hold=wall_arms(5, 5), eyes="closed" if k == 3 else "open")
-        F.append(finish_raw(g, v6.sweat(6, 6) if k >= 2 else None))
-    return F
-
-
 # ---------- 雙手往兩旁張開（不往上伸，手才不會變長） ----------
 def spread_arms(lift=0, dy=0):
     """從肩膀往兩旁伸直，lift = 手比肩膀高幾格（斜斜往上）。"""
@@ -303,7 +273,7 @@ def peace():
     return [[[3 if c == 13 else c for c in row] for row in v7.half(f)] for f in out]
 
 
-MS = {"peace": [200, 260, 400, 700],"climb": [180] * 4, "hang": [400, 400, 600, 300], "stretch": [300, 400, 500, 500, 400, 400, 300],
+MS = {"peace": [200, 260, 400, 700],"stretch": [300, 400, 500, 500, 400, 400, 300],
       "reach": [120, 120], "carry": [220] * 4,
       "held": [160] * 4, "fall": [90] * 2, "land": [140, 140, 200, 300, 300, 300],
       "peek": [150, 120, 100, 100, 700, 250, 200, 400, 450, 450, 450, 450, 180, 900, 500, 150, 180, 160, 300]}
@@ -325,7 +295,7 @@ if __name__ == "__main__":
     os.makedirs(out, exist_ok=True)
     meta = {}
     for name, fn in (("held", held), ("fall", fall), ("land", land), ("peek", peek),
-                     ("climb", climb), ("hang", hang), ("stretch", stretch), ("peace", peace)):
+                     ("stretch", stretch), ("peace", peace)):
         fr = fn()
         strip = Image.new("RGBA", (32 * len(fr), 32))
         for i, f in enumerate(fr):

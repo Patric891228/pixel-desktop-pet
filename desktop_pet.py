@@ -383,11 +383,51 @@ class Stats:
 
 
 # ===== 素材 =====
+ACC_DIR = os.path.join(CHAR_DIR, "accessories")
+# 配件部位：疊圖順序由下往上（衣服換色最先，頭上的最後）
+ACC_SLOTS = [("outfit", "服裝"), ("hands", "手套"), ("neck", "脖子"), ("face", "口罩"), ("eyes", "眼鏡"), ("head", "頭上")]
+
+
+def load_accessories():
+    """角色包的 accessories/items.json：{"items": [{id, name, slot}], "sets": [{name, items: {slot: id}}]}。"""
+    try:
+        d = json.load(open(os.path.join(ACC_DIR, "items.json"), encoding="utf-8"))
+    except (OSError, ValueError):
+        return [], []
+    if isinstance(d, list):
+        d = {"items": d}
+    items = [it for it in d.get("items", []) if os.path.isdir(os.path.join(ACC_DIR, it.get("id", "")))]
+    ids = {it["id"] for it in items}
+    sets = [st for st in d.get("sets", []) if all(i in ids for i in st.get("items", {}).values())]
+    return items, sets
+
+
 class Sprites:
-    def __init__(self):
+    def __init__(self, worn=None):
         self.meta = json.load(open(os.path.join(ASSETS, "anims.json"), encoding="utf-8"))
-        self.sheets = {n: QPixmap(os.path.join(ASSETS, n + ".png")) for n in self.meta}
+        self.base = {n: QPixmap(os.path.join(ASSETS, n + ".png")) for n in self.meta}
+        self.acc_items, self.acc_sets = load_accessories()
         self.cache = {}
+        self.set_worn(worn or {})
+
+    def set_worn(self, worn):
+        """worn：{部位: 配件 id}。把配件疊圖畫到每個動作圖上（動作圖改了、配件換了都重畫）。"""
+        known = {it["id"]: it["slot"] for it in self.acc_items}
+        self.worn = {slot: i for slot, i in worn.items() if known.get(i) == slot}
+        order = [self.worn[s] for s, _ in ACC_SLOTS if s in self.worn]
+        self.sheets = {}
+        for n, pix in self.base.items():
+            layers = [p for p in (os.path.join(ACC_DIR, i, n + ".png") for i in order) if os.path.exists(p)]
+            if not layers:
+                self.sheets[n] = pix
+                continue
+            out = QPixmap(pix)
+            p = QPainter(out)
+            for f in layers:
+                p.drawPixmap(0, 0, QPixmap(f))
+            p.end()
+            self.sheets[n] = out
+        self.cache.clear()
 
     def frame(self, name, i, scale, flip):
         key = (name, i, scale, flip)
@@ -986,7 +1026,7 @@ class Pet(QWidget):
         self.key_hist = []                             # 最近幾分鐘的按鍵：[(時間, 次數), ...]
         self.typing_since, self.next_typing = None, time.time() + 10 * 60
         self.profile_dialog = None
-        self.sprites = Sprites()
+        self.sprites = Sprites(self.stats.settings.get("accessories"))
         self.bubble = Bubble(self.bubble_changed)
         self.sprite_rect = QRect()
         self.bubble_rect = QRect()
@@ -1715,6 +1755,8 @@ class Pet(QWidget):
             a = gm.addAction(QIcon(QPixmap.fromImage(gift_icon(gid).scaled(24, 24))), label)
             a.triggered.connect(lambda _=False, gid=gid: self.do_gift(gid))
             a.setEnabled(self.stats.gift_stock > 0)
+        if self.sprites.acc_items:
+            self.build_accessory_menu(menu.addMenu("配件"))
         menu.addAction("狀態", self.show_panel)
         n = len(self.today_events())
         menu.addAction(f"行事曆（今天 {n} 件）" if n else "行事曆", self.show_calendar)
@@ -1801,6 +1843,52 @@ class Pet(QWidget):
         st.addAction("清除資料並移除…", self.uninstall)
         menu.addSeparator()
         menu.addAction("離開", self.quit)
+
+    def build_accessory_menu(self, am):
+        worn = self.sprites.worn
+        for st in self.sprites.acc_sets:
+            on = all(worn.get(k) == v for k, v in st["items"].items())
+            a = QAction(st["name"], am, checkable=True, checked=on)
+            a.triggered.connect(lambda _=False, st=st, on=on: self.set_set(st, not on))
+            am.addAction(a)
+        if self.sprites.acc_sets:
+            am.addSeparator()
+        for slot, label in ACC_SLOTS:
+            items = [it for it in self.sprites.acc_items if it["slot"] == slot]
+            if not items:
+                continue
+            sm = am.addMenu(label)
+            grp = QActionGroup(sm)
+            for iid, name in [(None, "不戴")] + [(it["id"], it["name"]) for it in items]:
+                a = QAction(name, sm, checkable=True, checked=worn.get(slot) == iid)
+                a.triggered.connect(lambda _=False, slot=slot, iid=iid: self.wear(slot, iid))
+                grp.addAction(a); sm.addAction(a)
+        am.addSeparator()
+        a = am.addAction("全部拿掉", lambda _=False: self.wear_all({}))
+        a.setEnabled(bool(worn))
+
+    def wear(self, slot, iid):
+        worn = dict(self.sprites.worn)
+        if iid:
+            worn[slot] = iid
+        else:
+            worn.pop(slot, None)
+        self.wear_all(worn)
+
+    def set_set(self, st, on):
+        worn = dict(self.sprites.worn)
+        for k, v in st["items"].items():
+            if on:
+                worn[k] = v
+            elif worn.get(k) == v:
+                worn.pop(k)
+        self.wear_all(worn)
+
+    def wear_all(self, worn):
+        self.sprites.set_worn(worn)
+        self.stats.settings["accessories"] = dict(self.sprites.worn)
+        self.stats.save()
+        self.redraw()
 
     def setup_tray(self):
         self.app.setStyleSheet(MENU_CSS % pixel_font().family())

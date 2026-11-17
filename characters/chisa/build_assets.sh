@@ -7,3 +7,4 @@ python3 art/build_girl.py art assets
 python3 art/make_desktop.py assets
 python3 art/make_transitions.py assets
 python3 ../../tools/finish_assets.py assets --fix-top
+python3 art/make_accessories.py assets accessories

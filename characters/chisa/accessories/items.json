@@ -1,0 +1,133 @@
+{
+ "items": [
+  {
+   "id": "ears_black",
+   "name": "黑貓耳",
+   "slot": "head"
+  },
+  {
+   "id": "ears_white",
+   "name": "白貓耳",
+   "slot": "head"
+  },
+  {
+   "id": "ears_orange",
+   "name": "橘貓耳",
+   "slot": "head"
+  },
+  {
+   "id": "ears_tabby",
+   "name": "灰虎斑貓耳",
+   "slot": "head"
+  },
+  {
+   "id": "ears_calico",
+   "name": "三花貓耳",
+   "slot": "head"
+  },
+  {
+   "id": "phones_black",
+   "name": "黑色耳機",
+   "slot": "head"
+  },
+  {
+   "id": "phones_white",
+   "name": "白色耳機",
+   "slot": "head"
+  },
+  {
+   "id": "phones_pink",
+   "name": "粉色耳機",
+   "slot": "head"
+  },
+  {
+   "id": "scarf_red",
+   "name": "紅色圍巾",
+   "slot": "neck"
+  },
+  {
+   "id": "scarf_cream",
+   "name": "奶白圍巾",
+   "slot": "neck"
+  },
+  {
+   "id": "scarf_green",
+   "name": "墨綠圍巾",
+   "slot": "neck"
+  },
+  {
+   "id": "scarf_mustard",
+   "name": "芥末黃圍巾",
+   "slot": "neck"
+  },
+  {
+   "id": "scarf_pink",
+   "name": "粉紅圍巾",
+   "slot": "neck"
+  },
+  {
+   "id": "glasses_round",
+   "name": "圓框眼鏡",
+   "slot": "eyes"
+  },
+  {
+   "id": "outfit_white",
+   "name": "白色夏季制服",
+   "slot": "outfit"
+  },
+  {
+   "id": "outfit_navy",
+   "name": "海軍藍制服",
+   "slot": "outfit"
+  },
+  {
+   "id": "outfit_wine",
+   "name": "酒紅制服",
+   "slot": "outfit"
+  },
+  {
+   "id": "outfit_xmas",
+   "name": "聖誕服",
+   "slot": "outfit"
+  },
+  {
+   "id": "hat_santa",
+   "name": "聖誕帽",
+   "slot": "head"
+  },
+  {
+   "id": "gloves_white",
+   "name": "白手套",
+   "slot": "hands"
+  },
+  {
+   "id": "gloves_red",
+   "name": "紅手套",
+   "slot": "hands"
+  },
+  {
+   "id": "gloves_pink",
+   "name": "粉紅手套",
+   "slot": "hands"
+  },
+  {
+   "id": "gloves_navy",
+   "name": "深藍手套",
+   "slot": "hands"
+  },
+  {
+   "id": "gloves_brown",
+   "name": "咖啡色毛線手套",
+   "slot": "hands"
+  }
+ ],
+ "sets": [
+  {
+   "name": "聖誕套裝",
+   "items": {
+    "outfit": "outfit_xmas",
+    "head": "hat_santa"
+   }
+  }
+ ]
+}

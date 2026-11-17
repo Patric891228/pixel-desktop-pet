@@ -229,6 +229,22 @@ K 黑、A 灰、B 深棕、C 棕、G 金、W 白、R 紅、D 暗紅、N 深綠�
 
 只用在摸頭或收禮反應的動作寫 `{}` 就好。
 
+## 配件（選填）
+
+角色包可以有 `accessories/`，選單就會多一個「配件」：
+
+```
+accessories/
+  items.json              {"items": [{"id", "name", "slot"}], "sets": [{"name", "items": {部位: id}}]}
+  <配件 id>/<動作>.png    跟 assets/<動作>.png 一樣大的透明疊圖
+```
+
+部位（slot）有 `outfit` 服裝、`hands` 手套、`neck` 脖子、`face` 口罩、`eyes` 眼鏡、`head` 頭上，每個部位同時只能戴一個，疊圖順序也是這個順序（服裝最底下）。
+服裝換色也是疊圖：把要換色的格子畫成新顏色就好。某個動作沒有疊圖就照原樣顯示。`sets` 是套裝，選單裡一次穿上好幾個部位。
+
+千咲的配件用 `art/make_accessories.py` 產生：從紅色蝴蝶結找出每一格頭的位置和朝向（正面／朝右／朝左），把配件的正面、側面小圖貼上去；手套換「臉以外的小塊皮膚」的顏色；服裝換外套、亮邊、裙子的顏色。動作圖改了要重跑（`build_assets.sh` 最後一步）。
+找錯的格子在 `OVERRIDE` 手動指定，被道具擋住的範圍寫在 `HIDE`。審核頁：`python3 tools/preview_accessories.py characters/<id> 輸出.html [配件id 或 a+b 套裝 ...]`。
+
 ## 千咲的做法（參考）
 
 千咲的圖全部用 Python 畫（`characters/chisa/art/`），`build_assets.sh` 依序跑畫圖程式，最後用 `tools/finish_assets.py` 合併各程式輸出的 `anims_*.json`。
